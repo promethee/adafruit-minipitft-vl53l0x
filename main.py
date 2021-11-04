@@ -10,7 +10,11 @@ from adafruit_rgb_display.rgb import color565
 import adafruit_rgb_display.st7789 as st7789
 from PIL import Image, ImageDraw, ImageFont
 from fonts.ttf import RobotoMedium
+import busio
+import adafruit_vl53l0x
 
+i2c = busio.I2C(board.SCL, board.SDA)
+vl53 = adafruit_vl53l0x.VL53L0X(i2c)
 
 # Configuration for CS and DC pins for Raspberry Pi
 cs_pin = digitalio.DigitalInOut(board.CE0)
@@ -48,19 +52,47 @@ COLORS = [
     (255, 0, 255),
     (255, 0, 128),
 ]
+COLORS_LENGTH = len(COLORS)
 index = 0
 
-font = ImageFont.truetype(RobotoMedium, 40)
+font_ui = ImageFont.truetype(RobotoMedium, 64)
+font = ImageFont.truetype(RobotoMedium, 32)
+font_small = ImageFont.truetype(RobotoMedium, 32)
+font_smiley = ImageFont.truetype('./CODE2000.TTF', 32)
 img = Image.new("RGB", (WIDTH, HEIGHT), 0)
 draw = ImageDraw.Draw(img)
 
+index = 0
+paused = False
+threshold = -1
+distances = []
+DISTANCES_MAX_LEN = (WIDTH/4) if (WIDTH % 2 == 0) else ((WIDTH - 1)/4)
+
+def format(distance):
+    if (distance > 1000):
+        return str(distance)[0:1] + ' m' + str(distance)[1:3]
+    if (distance > 100 and distance < 999):
+        return str(distance)[0:2] + 'cm' + str(distance)[2:3]
+    if (distance > 0 and distance < 99):
+        return str(distance)[0:2] + 'mm'
+
+def get_ratio(distance, threshold):
+    return round((distance / threshold) * 100) / 100
+
+def show_range(distance, ratio):
+    percent = str(round(ratio * 100)) + '%'
+    text = format(distance)
+    pw, ph = draw.textsize(percent, font=font_small)
+    draw.text((WIDTH - pw, HEIGHT - 64), percent, font=font_small, fill=WHITE)
+    draw.text((int(WIDTH * 0.6), HEIGHT - 32), text, font=font_small, fill=WHITE)
+
 def show_credits():
     global index
-    ROTATION = 270 if FLIP else 90
-    draw.rectangle((0, 0, WIDTH, HEIGHT), fill=BLACK)
-    draw.text((int(WIDTH*0.09), int(HEIGHT*0.35)), "promethee", font=font, fill=COLORS[index])
-    draw.text((int(WIDTH*0.2), int(HEIGHT*0.6)), "@github", font=font, fill=COLORS[index])
-    display.image(img, ROTATION)
+    emoji = "¯\_(ツ)_/¯"
+    lw, lh = draw.textsize(emoji, font=font_smiley)
+    draw.text(((WIDTH/2) - (lw/2), int(HEIGHT*0.15)), emoji, font=font_smiley, fill=COLORS[index])
+    draw.text((0, int(HEIGHT*0.4)), "promethee", font=font, fill=COLORS[index])
+    draw.text((0, int(HEIGHT*0.7)), "@github", font=font, fill=COLORS[index])
 
 backlight = digitalio.DigitalInOut(board.D22)
 backlight.switch_to_output()
@@ -70,9 +102,13 @@ buttonB = digitalio.DigitalInOut(board.D24)
 buttonA.switch_to_input()
 buttonB.switch_to_input()
 
-paused = False
-
 while True:
+    distance = vl53.range
+
+    if (distance > threshold):
+        threshold = distance
+
+    draw.rectangle((0, 0, WIDTH, HEIGHT), fill=BLACK)
     if not buttonB.value:
         FLIP = not FLIP
         time.sleep(0.3)
@@ -82,4 +118,9 @@ while True:
     if not paused:
         index = index + 1 if index < len(COLORS) - 1 else 0
 
+    ratio = get_ratio(distance, threshold)
+
+    show_range(distance, ratio)
     show_credits()
+    ROTATION = 270 if FLIP else 90
+    display.image(img, ROTATION)
